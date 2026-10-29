@@ -1,0 +1,16 @@
+# Rôle de chaque bookmaker, appliqué quand le collecteur le découvre.
+#   fr_licensed     : agréé ANJ, l'utilisateur peut y parier
+#   sharp_reference : sert à calculer la cote juste (jamais un débouché pour un résident FR)
+#   exchange / other / unknown
+#
+# Les clés exactes dépendent du fournisseur et NE SONT PAS encore vérifiées pour les books
+# français : après la première collecte, `parisportif bookmakers` liste les clés réellement
+# reçues, puis `parisportif set-role <clé> <rôle>` (ou compléter ce fichier).
+
+[roles]
+pinnacle = "sharp_reference"
+betfair_ex_eu = "exchange"
+# Candidats à confirmer avec une vraie clé d'API :
+# winamax_fr = "fr_licensed"
+# betclic_fr = "fr_licensed"
+# unibet_fr = "fr_licensed"
