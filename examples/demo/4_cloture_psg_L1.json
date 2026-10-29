@@ -1,0 +1,172 @@
+{
+ "scope": "soccer_france_ligue_one",
+ "observed_at": "2026-11-01T19:40:00Z",
+ "response": [
+  {
+   "id": "demo-psg-lens",
+   "sport_key": "soccer_france_ligue_one",
+   "sport_title": "Ligue 1 - France",
+   "commence_time": "2026-11-01T19:45:00Z",
+   "home_team": "Paris Saint Germain",
+   "away_team": "RC Lens",
+   "bookmakers": [
+    {
+     "key": "pinnacle",
+     "title": "Pinnacle",
+     "last_update": "2026-11-01T19:40:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Paris Saint Germain",
+         "price": 1.4
+        },
+        {
+         "name": "Draw",
+         "price": 5.1
+        },
+        {
+         "name": "RC Lens",
+         "price": 7.8
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 1.95,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 1.93,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "winamax_fr",
+     "title": "Winamax",
+     "last_update": "2026-11-01T19:40:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Paris Saint Germain",
+         "price": 1.38
+        },
+        {
+         "name": "Draw",
+         "price": 4.6
+        },
+        {
+         "name": "RC Lens",
+         "price": 6.6
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 1.8,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 1.92,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "betclic_fr",
+     "title": "Betclic",
+     "last_update": "2026-11-01T19:40:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Paris Saint Germain",
+         "price": 1.37
+        },
+        {
+         "name": "Draw",
+         "price": 4.5
+        },
+        {
+         "name": "RC Lens",
+         "price": 6.8
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 1.82,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 1.9,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "unibet_fr",
+     "title": "Unibet",
+     "last_update": "2026-11-01T19:40:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Paris Saint Germain",
+         "price": 1.39
+        },
+        {
+         "name": "Draw",
+         "price": 4.55
+        },
+        {
+         "name": "RC Lens",
+         "price": 6.5
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 1.79,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 1.93,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

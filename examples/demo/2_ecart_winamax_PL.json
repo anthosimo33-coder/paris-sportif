@@ -1,0 +1,157 @@
+{
+ "scope": "soccer_epl",
+ "observed_at": "2026-11-01T15:00:00Z",
+ "response": [
+  {
+   "id": "demo-ars-che",
+   "sport_key": "soccer_epl",
+   "sport_title": "EPL",
+   "commence_time": "2026-11-01T16:30:00Z",
+   "home_team": "Arsenal",
+   "away_team": "Chelsea",
+   "bookmakers": [
+    {
+     "key": "pinnacle",
+     "title": "Pinnacle",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Arsenal",
+         "price": 1.85
+        },
+        {
+         "name": "Draw",
+         "price": 3.85
+        },
+        {
+         "name": "Chelsea",
+         "price": 4.35
+        }
+       ]
+      },
+      {
+       "key": "spreads",
+       "outcomes": [
+        {
+         "name": "Arsenal",
+         "price": 1.87,
+         "point": -0.5
+        },
+        {
+         "name": "Chelsea",
+         "price": 2.05,
+         "point": 0.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "winamax_fr",
+     "title": "Winamax",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Arsenal",
+         "price": 1.8
+        },
+        {
+         "name": "Draw",
+         "price": 3.6
+        },
+        {
+         "name": "Chelsea",
+         "price": 4.1
+        }
+       ]
+      },
+      {
+       "key": "spreads",
+       "outcomes": [
+        {
+         "name": "Arsenal",
+         "price": 1.8,
+         "point": -0.5
+        },
+        {
+         "name": "Chelsea",
+         "price": 1.98,
+         "point": 0.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "betclic_fr",
+     "title": "Betclic",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Arsenal",
+         "price": 1.78
+        },
+        {
+         "name": "Draw",
+         "price": 3.65
+        },
+        {
+         "name": "Chelsea",
+         "price": 4.2
+        }
+       ]
+      },
+      {
+       "key": "spreads",
+       "outcomes": [
+        {
+         "name": "Arsenal",
+         "price": 1.79,
+         "point": -0.5
+        },
+        {
+         "name": "Chelsea",
+         "price": 2.18,
+         "point": 0.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "unibet_fr",
+     "title": "Unibet",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Arsenal",
+         "price": 1.8
+        },
+        {
+         "name": "Draw",
+         "price": 3.55
+        },
+        {
+         "name": "Chelsea",
+         "price": 4.15
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

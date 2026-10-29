@@ -1,0 +1,6 @@
+# Rôles pour la démo (clés fictives : les vraies clés FR restent à confirmer).
+[roles]
+pinnacle = "sharp_reference"
+winamax_fr = "fr_licensed"
+betclic_fr = "fr_licensed"
+unibet_fr = "fr_licensed"

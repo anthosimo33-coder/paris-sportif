@@ -151,3 +151,14 @@ def test_cadence_speeds_up_near_kickoff_and_slows_on_low_quota() -> None:
     assert next_interval(5 * 24 * 60, 10_000, 500) == timedelta(hours=3)
     assert next_interval(None, None, 500) == timedelta(hours=6)
     assert next_interval(30, 100, 500) == timedelta(minutes=8)
+
+
+def test_cli_shows_handicap_from_the_bettor_side() -> None:
+    from parisportif.cli import _fmt_line
+
+    # Stocké côté domicile (-0.5) : l'extérieur se lit +0.5, le domicile -0.5.
+    assert _fmt_line("asian_handicap", "away", Decimal("-0.5")) == " +0.5"
+    assert _fmt_line("asian_handicap", "home", Decimal("-0.5")) == " -0.5"
+    assert _fmt_line("asian_handicap", "away", Decimal("0.25")) == " -0.25"
+    assert _fmt_line("total_goals", "over", Decimal("2.50")) == " 2.5"
+    assert _fmt_line("1x2", "home", Decimal(0)) == ""

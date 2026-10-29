@@ -180,12 +180,23 @@ def cmd_alias(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
-def _fmt_line(market: str, line: Decimal) -> str:
+WEEKDAYS = ("lun", "mar", "mer", "jeu", "ven", "sam", "dim")
+
+
+def _fmt_line(market: str, selection: str, line: Decimal) -> str:
+    """Ligne lisible par le parieur. En base, le handicap est stocké côté domicile :
+    « extérieur » sur la ligne -0.5 se lit « extérieur +0.5 »."""
     if market == "total_goals":
-        return f" {line}"
+        return f" {line.normalize():f}"
     if market == "asian_handicap":
-        return f" {float(line):+g}"
+        shown = -line if selection == "away" else line
+        return f" {shown.normalize():+f}"
     return ""
+
+
+def _ago(at: datetime, then: datetime) -> str:
+    minutes = int((at - then).total_seconds() // 60)
+    return f"{minutes} min" if minutes < 120 else f"{minutes // 60} h"
 
 
 def cmd_scan(settings: Settings, args: argparse.Namespace) -> int:
@@ -205,15 +216,17 @@ def cmd_scan(settings: Settings, args: argparse.Namespace) -> int:
     for s in signals:
         pari = (
             f"{MARKET_LABELS.get(s.market, s.market)} "
-            f"{SELECTION_LABELS.get(s.selection, s.selection)}{_fmt_line(s.market, s.line)}"
+            f"{SELECTION_LABELS.get(s.selection, s.selection)}"
+            f"{_fmt_line(s.market, s.selection, s.line)}"
         )
-        age = int((at - s.price_seen_at).total_seconds() // 60)
-        flag = "  ⚠ trop beau : vérifier (erreur de cote ?)" if s.suspect else ""
-        print(f"{s.home} – {s.away}   {s.kickoff:%a %d/%m %H:%M} UTC")
+        flag = "   ⚠ trop beau : vérifier (erreur de cote ?)" if s.suspect else ""
+        day = WEEKDAYS[s.kickoff.weekday()]
+        print(f"{s.home} – {s.away}   {day} {s.kickoff:%d/%m %H:%M} UTC")
         print(
-            f"  {pari:<22} {s.bookmaker} {s.price:.2f}   juste {s.fair_price:.2f}   "
-            f"{s.edge:+.1%}   mise {s.kelly_quarter:.1%} bankroll   cote vue il y a {age} min"
-            f"{flag}"
+            f"  {pari:<20} {s.bookmaker:<12} {s.price:>5.2f}   juste {s.fair_price:>5.2f}   "
+            f"{s.edge:+6.1%}   mise {s.kelly_quarter:.1%}   "
+            f"inchangée depuis {_ago(at, s.price_seen_at)}, confirmée il y a "
+            f"{_ago(at, s.confirmed_at)}{flag}"
         )
     return 0
 

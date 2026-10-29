@@ -1,0 +1,323 @@
+{
+ "scope": "soccer_france_ligue_one",
+ "observed_at": "2026-11-01T15:00:00Z",
+ "response": [
+  {
+   "id": "demo-psg-lens",
+   "sport_key": "soccer_france_ligue_one",
+   "sport_title": "Ligue 1 - France",
+   "commence_time": "2026-11-01T19:45:00Z",
+   "home_team": "Paris Saint Germain",
+   "away_team": "RC Lens",
+   "bookmakers": [
+    {
+     "key": "pinnacle",
+     "title": "Pinnacle",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Paris Saint Germain",
+         "price": 1.42
+        },
+        {
+         "name": "Draw",
+         "price": 4.95
+        },
+        {
+         "name": "RC Lens",
+         "price": 7.4
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 1.88,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 2.0,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "winamax_fr",
+     "title": "Winamax",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Paris Saint Germain",
+         "price": 1.38
+        },
+        {
+         "name": "Draw",
+         "price": 4.6
+        },
+        {
+         "name": "RC Lens",
+         "price": 6.6
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 2.1,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 1.7,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "betclic_fr",
+     "title": "Betclic",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Paris Saint Germain",
+         "price": 1.37
+        },
+        {
+         "name": "Draw",
+         "price": 4.5
+        },
+        {
+         "name": "RC Lens",
+         "price": 6.8
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 1.82,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 1.9,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "unibet_fr",
+     "title": "Unibet",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Paris Saint Germain",
+         "price": 1.39
+        },
+        {
+         "name": "Draw",
+         "price": 4.55
+        },
+        {
+         "name": "RC Lens",
+         "price": 6.5
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 1.79,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 1.93,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "demo-om-ol",
+   "sport_key": "soccer_france_ligue_one",
+   "sport_title": "Ligue 1 - France",
+   "commence_time": "2026-11-01T16:15:00Z",
+   "home_team": "Marseille",
+   "away_team": "Lyon",
+   "bookmakers": [
+    {
+     "key": "pinnacle",
+     "title": "Pinnacle",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Marseille",
+         "price": 2.05
+        },
+        {
+         "name": "Draw",
+         "price": 3.6
+        },
+        {
+         "name": "Lyon",
+         "price": 3.55
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 1.8,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 2.08,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "winamax_fr",
+     "title": "Winamax",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Marseille",
+         "price": 1.98
+        },
+        {
+         "name": "Draw",
+         "price": 3.4
+        },
+        {
+         "name": "Lyon",
+         "price": 3.35
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 1.74,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 1.98,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "betclic_fr",
+     "title": "Betclic",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Marseille",
+         "price": 1.97
+        },
+        {
+         "name": "Draw",
+         "price": 3.45
+        },
+        {
+         "name": "Lyon",
+         "price": 3.3
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "key": "unibet_fr",
+     "title": "Unibet",
+     "last_update": "2026-11-01T15:00:00Z",
+     "markets": [
+      {
+       "key": "h2h",
+       "outcomes": [
+        {
+         "name": "Marseille",
+         "price": 1.92
+        },
+        {
+         "name": "Draw",
+         "price": 3.35
+        },
+        {
+         "name": "Lyon",
+         "price": 3.95
+        }
+       ]
+      },
+      {
+       "key": "totals",
+       "outcomes": [
+        {
+         "name": "Over",
+         "price": 1.75,
+         "point": 2.5
+        },
+        {
+         "name": "Under",
+         "price": 1.97,
+         "point": 2.5
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
