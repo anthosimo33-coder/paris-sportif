@@ -152,7 +152,12 @@ def main() -> None:
             path = OUT / f"{name}_{code}.json"
             path.write_text(
                 json.dumps(
-                    {"scope": scope, "observed_at": observed_at, "response": events},
+                    {
+                        "scope": scope,
+                        "observed_at": observed_at,
+                        "markets": ["h2h", "totals", "spreads"],
+                        "response": events,
+                    },
                     indent=1,
                     ensure_ascii=False,
                 )

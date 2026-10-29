@@ -123,19 +123,45 @@ TEST_DATABASE_URL=postgresql://parisportif:parisportif@localhost:5432/postgres u
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
+## Plusieurs sources
+
+- Une clé de bookmaker appartient à **une seule source**. Si une 2e source livre aussi
+  `winamax_fr`, elle écrit sous `autre_source:winamax_fr` : deux flux ne s'écrasent jamais.
+- La fraîcheur se contrôle **par source** : une source arrêtée ne devient pas « confirmée »
+  parce qu'une autre continue de voir le match. Un écart n'est retenu que si la source de la
+  cote FR et celle de chaque référence ont confirmé récemment. Le retard toléré suit la
+  cadence attendue (1,5 x l'intervalle de passage à cette distance du coup d'envoi).
+- L'horaire est versionné par source ; le coup d'envoi retenu est le **plus tôt** annoncé
+  (prudent : pas de cote de live prise pour de l'avant-match).
+- Les noms d'équipes sont normalisés **prudemment** (casse, accents, ponctuation ; les sigles
+  restent : « Barcelona » et « Barcelona SC » sont deux clubs). Un nom inconnu crée une équipe,
+  marquée `needs_review` si une autre source a déjà rempli le référentiel ; on la rattache avec
+  `parisportif alias "<nom>" <team_id>` pour les passages suivants.
+
+## Archive brute : purge
+
+`raw_payload` est immuable mais purgeable (aucune clé étrangère n'y pointe, `DELETE`
+autorisé) : environ 45 ko stockés par passage pour 10 matchs x 15 books, du même ordre que le
+journal des cotes (1 à 2 fois sa taille par passage, mesuré sur données synthétiques). Rétention :
+
+```sql
+DELETE FROM raw_payload WHERE first_seen < now() - interval '90 days';
+```
+
 ## Limites connues (à traiter, pas cachées)
 
 - **Couverture FR de The Odds API non vérifiée** (régions, clés `*_fr`). L'interface
   `OddsProvider` permet de brancher un autre fournisseur (OddsPapi, odds-api.io, flux maison).
 - **Pinnacle** : API publique fermée depuis juillet 2025 ; via un agrégateur, ses cotes peuvent
   être retardées. Une référence en retard fabrique de faux écarts : à mesurer.
-- **Deux sources en désaccord sur l'horaire** : `event_schedule` garde la dernière valeur
-  annoncée, sans priorité entre sources.
-- **Alias d'équipes globaux** (pas par compétition) : deux clubs homonymes de pays différents
-  doivent être séparés à la main.
+- **Flux figé chez l'agrégateur** : un passage réussi confirme une cote même si la source n'a
+  pas rafraîchi ce bookmaker (`last_update` ancien). `source_updated_at` est stocké mais pas
+  encore exploité pour marquer ces cas.
+- **Doublons d'événements** : un alias posé après coup ne déplace pas l'historique déjà écrit
+  sous le doublon (journal en ajout seul) ; pas encore de commande de fusion.
+- **Marchés** : seuls 1N2, buts et handicap (appel groupé). Les deux équipes marquent /
+  remboursé si nul demandent l'appel par match, non implémenté.
 - **Handicaps entiers ou quarts** : l'avantage affiché est l'EV hors remboursement ; le signe
   est juste, l'ampleur légèrement surestimée.
 - **Avant-match uniquement** : les matchs commencés sont ignorés (la clôture = dernier état
   avant le coup d'envoi).
-- `raw_payload` grossit à chaque passage (les `last_update` changent l'empreinte) :
-  partitionnement / rétention à prévoir avant la montée en volume.

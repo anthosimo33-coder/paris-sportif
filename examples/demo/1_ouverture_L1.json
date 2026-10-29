@@ -1,6 +1,11 @@
 {
  "scope": "soccer_france_ligue_one",
  "observed_at": "2026-11-01T14:00:00Z",
+ "markets": [
+  "h2h",
+  "totals",
+  "spreads"
+ ],
  "response": [
   {
    "id": "demo-psg-lens",

@@ -120,10 +120,17 @@ class _Resolver:
             "SELECT team_id FROM team_alias WHERE alias_norm = %s", (norm,)
         ).fetchone()
         if row is None:
-            # Première source : elle crée le référentiel. Les sources suivantes devront
-            # passer par des alias (manuels si besoin) : voir `parisportif alias`.
+            # Nom inconnu : on crée l'équipe plutôt que de deviner. Un doublon se voit et se
+            # rattache (`parisportif alias`) ; une fusion à tort corromprait l'historique.
+            # Si une autre source a déjà rempli le référentiel, l'équipe est à vérifier.
+            other = self.conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM team_alias WHERE provider <> %s)",
+                (self.provider,),
+            ).fetchone()
+            review = bool(other and other[0])
             created = self.conn.execute(
-                "INSERT INTO team (name) VALUES (%s) RETURNING id", (name,)
+                "INSERT INTO team (name, needs_review) VALUES (%s, %s) RETURNING id",
+                (name, review),
             ).fetchone()
             assert created is not None
             team_id = int(created[0])
@@ -141,6 +148,12 @@ class _Resolver:
         return team_id
 
     def bookmaker(self, ref: str, name: str) -> str:
+        """Clé canonique du bookmaker pour CETTE source.
+
+        Une clé n'appartient qu'à une source : si une autre source livre déjà « winamax_fr »,
+        celle-ci écrit sous « <source>:winamax_fr ». Deux flux d'un même book ne s'écrasent
+        donc jamais, et un retrait vu par l'un n'efface pas la cote que l'autre voit encore.
+        """
         if ref in self._bookmakers:
             return self._bookmakers[ref]
         row = self.conn.execute(
@@ -148,24 +161,34 @@ class _Resolver:
             (self.provider, ref),
         ).fetchone()
         if row is None:
-            role = self.roles.get(ref, "unknown")
+            taken = self.conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM bookmaker WHERE key = %s)", (ref,)
+            ).fetchone()
+            key = f"{self.provider}:{ref}" if taken and taken[0] else ref
             self.conn.execute(
                 """
                 INSERT INTO bookmaker (key, name, role) VALUES (%s, %s, %s)
                 ON CONFLICT (key) DO NOTHING
                 """,
-                (ref, name, role),
+                (key, name, self.roles.get(key, self.roles.get(ref, "unknown"))),
             )
             self.conn.execute(
                 """
                 INSERT INTO bookmaker_source (provider, provider_ref, bookmaker)
                 VALUES (%s, %s, %s)
                 """,
-                (self.provider, ref, ref),
+                (self.provider, ref, key),
             )
-            key = ref
         else:
             key = str(row[0])
+            # Rôle ajouté au fichier après la découverte : appliqué tant que la base dit
+            # 'unknown' (un rôle fixé à la main avec set-role n'est jamais écrasé).
+            role = self.roles.get(key, self.roles.get(ref))
+            if role is not None and role != "unknown":
+                self.conn.execute(
+                    "UPDATE bookmaker SET role = %s WHERE key = %s AND role = 'unknown'",
+                    (role, key),
+                )
         self._bookmakers[ref] = key
         return key
 
@@ -183,10 +206,7 @@ class _Resolver:
             """
             SELECT e.id
             FROM event e
-            CROSS JOIN LATERAL (
-                SELECT s.commence_time FROM event_schedule s
-                WHERE s.event_id = e.id ORDER BY s.observed_at DESC LIMIT 1
-            ) k
+            CROSS JOIN LATERAL (SELECT kickoff_as_of(e.id, 'infinity') AS commence_time) k
             WHERE e.home_team_id = %s AND e.away_team_id = %s
               AND k.commence_time BETWEEN %s AND %s
             ORDER BY abs(extract(epoch FROM k.commence_time - %s))
@@ -256,34 +276,57 @@ def ingest(
         )
 
         resolver = _Resolver(conn, resp.provider, roles)
-        event_ids: list[int] = []
+        snaps: dict[int, EventSnapshot] = {}
+        for snap in resp.events:
+            # Deux références source pour un même match : la première l'emporte.
+            snaps.setdefault(resolver.event(snap), snap)
+        event_ids = sorted(snaps)
+
+        # Verrou par match (ordre croissant : pas d'interblocage) : deux passages qui touchent
+        # les mêmes matchs, quelle que soit leur source, s'exécutent l'un après l'autre.
+        for event_id in event_ids:
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"event:{event_id}",))
+
+        # Contrôle d'ordre propre à CETTE source : une autre source peut écrire plus tard.
+        if event_ids:
+            seen = conn.execute(
+                """
+                SELECT greatest(
+                    (SELECT max(observed_at) FROM odds_current
+                     WHERE event_id = ANY(%(ev)s) AND provider = %(p)s),
+                    (SELECT max(observed_at) FROM event_schedule
+                     WHERE event_id = ANY(%(ev)s) AND provider = %(p)s)
+                )
+                """,
+                {"ev": event_ids, "p": resp.provider},
+            ).fetchone()
+            if seen is not None and seen[0] is not None and seen[0] >= obs:
+                raise OutOfOrderError(f"cette source a déjà écrit à {seen[0]} pour ces matchs")
+
         schedule_changes = 0
         rows: list[tuple[object, ...]] = []
-        for snap in resp.events:
-            event_id = resolver.event(snap)
-            if event_id in event_ids:
-                continue  # deux références source pour un même match dans une réponse
-            event_ids.append(event_id)
+        for event_id in event_ids:
+            snap = snaps[event_id]
             conn.execute(
                 "INSERT INTO poll_event (poll_id, event_id, observed_at) VALUES (%s, %s, %s)",
                 (poll_id, event_id, obs),
             )
             current = conn.execute(
                 """
-                SELECT commence_time, observed_at FROM event_schedule
-                WHERE event_id = %s ORDER BY observed_at DESC LIMIT 1
+                SELECT commence_time FROM event_schedule
+                WHERE event_id = %s AND provider = %s
+                ORDER BY observed_at DESC LIMIT 1
                 """,
-                (event_id,),
+                (event_id, resp.provider),
             ).fetchone()
-            if current is not None and current[1] >= obs:
-                raise OutOfOrderError(f"horaire de l'événement {event_id} déjà vu à {current[1]}")
             if current is None or current[0] != snap.commence_time:
                 conn.execute(
                     """
-                    INSERT INTO event_schedule (event_id, observed_at, commence_time, poll_id)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO event_schedule
+                        (event_id, provider, observed_at, commence_time, poll_id)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
-                    (event_id, obs, snap.commence_time, poll_id),
+                    (event_id, resp.provider, obs, snap.commence_time, poll_id),
                 )
                 schedule_changes += 1
             for q in snap.quotes:
@@ -301,12 +344,6 @@ def ingest(
 
         inserted = removed = 0
         if event_ids:
-            stale = conn.execute(
-                "SELECT max(observed_at) FROM odds_current WHERE event_id = ANY(%s)",
-                (event_ids,),
-            ).fetchone()
-            if stale is not None and stale[0] is not None and stale[0] >= obs:
-                raise OutOfOrderError(f"cotes déjà observées à {stale[0]} pour ces événements")
             inserted, removed = _write_quotes(conn, poll_id, resp, obs, event_ids, rows)
 
         conn.execute(
@@ -355,15 +392,18 @@ def _write_quotes(
     event_ids: list[int],
     rows: list[tuple[object, ...]],
 ) -> tuple[int, int]:
+    # Table de travail de la session, vidée à chaque passage : fonctionne aussi quand
+    # l'appelant a déjà une transaction ouverte (ingest n'est alors qu'un savepoint).
     conn.execute(
         """
-        CREATE TEMP TABLE _incoming (
+        CREATE TEMP TABLE IF NOT EXISTS _incoming (
             event_id bigint, bookmaker text, market text, line numeric(6, 2),
             selection text, price numeric(9, 3), source_updated_at timestamptz,
             PRIMARY KEY (event_id, bookmaker, market, line, selection)
-        ) ON COMMIT DROP
+        ) ON COMMIT DELETE ROWS
         """
     )
+    conn.execute("TRUNCATE _incoming")
     with (
         conn.cursor() as cur,
         cur.copy(
@@ -438,6 +478,7 @@ def _write_quotes(
             ON CONFLICT (event_id, bookmaker, market, line, selection) DO UPDATE
             SET price = EXCLUDED.price, observed_at = EXCLUDED.observed_at,
                 provider = EXCLUDED.provider, poll_id = EXCLUDED.poll_id
+            WHERE odds_current.observed_at < EXCLUDED.observed_at
             RETURNING 1
         )
         SELECT count(*) FROM up

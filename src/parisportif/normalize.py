@@ -5,18 +5,16 @@ from __future__ import annotations
 import re
 import unicodedata
 
-# Suffixes/préfixes juridiques sans valeur d'identification. Volontairement court :
-# « Stade », « Olympique », « Racing » distinguent des clubs et ne sont PAS retirés.
-_LEGAL_TOKENS = frozenset({"fc", "afc", "cf", "sc", "ssc", "ac", "as", "sv", "fk", "cd", "club"})
-
 
 def normalize_team_name(name: str) -> str:
-    """« Paris Saint-Germain FC » -> « paris saint germain ». Déterministe et idempotent."""
+    """« Paris Saint-Germain » -> « paris saint germain ». Déterministe et idempotent.
+
+    Volontairement prudente : casse, accents et ponctuation seulement. Les sigles (FC, SC,
+    AS…) sont GARDÉS : « Barcelona » et « Barcelona SC » sont deux clubs. Mieux vaut un
+    doublon visible, rattaché ensuite par un alias manuel, qu'une fusion silencieuse.
+    """
     text = unicodedata.normalize("NFKD", name)
     text = "".join(c for c in text if not unicodedata.combining(c))
     text = text.lower().replace("&", " and ")
     text = re.sub(r"[^a-z0-9]+", " ", text)
-    tokens = [t for t in text.split() if t not in _LEGAL_TOKENS]
-    if not tokens:  # un nom fait uniquement de sigles (« AS ») reste tel quel
-        tokens = text.split()
-    return " ".join(tokens)
+    return " ".join(text.split())

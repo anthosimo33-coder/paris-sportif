@@ -14,7 +14,7 @@ from pathlib import Path
 from parisportif import db, pit
 from parisportif.collector import poll_once, run_forever
 from parisportif.config import ROLES, Settings, load_roles
-from parisportif.ingest import ingest, start_poll
+from parisportif.ingest import fail_poll, ingest, start_poll
 from parisportif.models import ProviderResponse
 from parisportif.normalize import normalize_team_name
 from parisportif.providers import the_odds_api
@@ -88,22 +88,48 @@ def cmd_collect(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def _markets_in_body(body: object) -> tuple[str, ...]:
+    """Marchés canoniques réellement présents dans une réponse enregistrée."""
+    found: dict[str, None] = {}
+    for ev in body if isinstance(body, list) else []:
+        for bk in (ev.get("bookmakers") or []) if isinstance(ev, dict) else []:
+            for mk in (bk.get("markets") or []) if isinstance(bk, dict) else []:
+                key = mk.get("key") if isinstance(mk, dict) else None
+                if key in the_odds_api.MARKET_MAP:
+                    found[the_odds_api.MARKET_MAP[key]] = None
+    return tuple(found)
+
+
 def cmd_ingest_file(settings: Settings, args: argparse.Namespace) -> int:
-    """Ingère une réponse brute enregistrée (rejeu, démo, tests)."""
+    """Ingère une réponse enregistrée (rejeu, démo, tests).
+
+    L'instant d'observation et la couverture de marchés viennent du FICHIER (ou des options),
+    jamais de l'horloge ni de la configuration courante : un rejeu daté « maintenant »
+    écraserait l'état réel, et une couverture inventée écrirait de faux retraits.
+    """
     data = json.loads(Path(args.path).read_text(encoding="utf-8"))
-    if isinstance(data, dict) and "response" in data:
-        body, scope = data["response"], data.get("scope", args.scope)
-        observed = _parse_at(data.get("observed_at") or args.observed_at)
-    else:
-        body, scope = data, args.scope
-        if args.observed_at is None:
-            print("--observed-at requis pour une réponse brute", file=sys.stderr)
-            return 2
-        observed = _parse_at(args.observed_at)
-    if not scope:
-        print("--scope requis", file=sys.stderr)
+    envelope = isinstance(data, dict) and "response" in data
+    body = data["response"] if envelope else data
+    scope = (data.get("scope") if envelope else None) or args.scope
+    raw_at = (data.get("observed_at") if envelope else None) or args.observed_at
+    if raw_at is None:
+        print("instant d'observation absent : champ observed_at ou --observed-at", file=sys.stderr)
         return 2
-    markets = tuple(dict.fromkeys(the_odds_api.MARKET_MAP[m] for m in settings.markets))
+    if not scope:
+        print("périmètre absent : champ scope ou --scope", file=sys.stderr)
+        return 2
+    observed = _parse_at(raw_at)
+    source_markets = (data.get("markets") if envelope else None) or (
+        args.markets.split(",") if args.markets else None
+    )
+    if source_markets:
+        unknown = [m for m in source_markets if m not in the_odds_api.MARKET_MAP]
+        if unknown:
+            print(f"marchés inconnus : {unknown}", file=sys.stderr)
+            return 2
+        markets = tuple(dict.fromkeys(the_odds_api.MARKET_MAP[m] for m in source_markets))
+    else:
+        markets = _markets_in_body(body)
     events, unmapped, warnings = the_odds_api.parse_odds_response(
         body, scope=scope, markets=markets, observed_at=observed
     )
@@ -127,7 +153,11 @@ def cmd_ingest_file(settings: Settings, args: argparse.Namespace) -> int:
             markets=markets,
             request_url=resp.request_url,
         )
-        stats = ingest(conn, poll_id, resp, roles=roles)
+        try:
+            stats = ingest(conn, poll_id, resp, roles=roles)
+        except Exception as exc:
+            fail_poll(conn, poll_id, error=f"ingestion : {exc}")
+            raise
     print(
         f"{args.path} @ {observed.isoformat()} : {stats.events_seen} matchs, "
         f"{stats.quotes_inserted} cotes écrites, {stats.quotes_removed} retraits"
@@ -202,7 +232,7 @@ def _ago(at: datetime, then: datetime) -> str:
 def cmd_scan(settings: Settings, args: argparse.Namespace) -> int:
     at = _parse_at(args.at)
     with db.connect(settings.database_url) as conn:
-        signals = pit.value_scan(
+        result = pit.value_scan(
             conn,
             at,
             min_edge=args.min_edge,
@@ -210,10 +240,15 @@ def cmd_scan(settings: Settings, args: argparse.Namespace) -> int:
             max_staleness=timedelta(minutes=args.max_staleness_min),
         )
     print(f"Écarts visibles à {at:%Y-%m-%d %H:%M} UTC (seuil {args.min_edge:.0%})\n")
-    if not signals:
+    if result.stale_skipped:
+        print(
+            f"⚠ {result.stale_skipped} marché(s) avec un écart ignoré(s) : une source n'a pas "
+            "confirmé ses cotes à temps (collecteur en retard ou arrêté ?)\n"
+        )
+    if not result.signals:
         print("Aucun écart au-dessus du seuil.")
         return 0
-    for s in signals:
+    for s in result.signals:
         pari = (
             f"{MARKET_LABELS.get(s.market, s.market)} "
             f"{SELECTION_LABELS.get(s.selection, s.selection)}"
@@ -229,6 +264,16 @@ def cmd_scan(settings: Settings, args: argparse.Namespace) -> int:
             f"{_ago(at, s.confirmed_at)}{flag}"
         )
     return 0
+
+
+def configure_logging(*, verbose: bool = False) -> None:
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s : %(message)s",
+    )
+    # httpx journalise chaque requête avec son URL complète, donc la clé d'API (apiKey=…).
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -247,6 +292,7 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("path")
     f.add_argument("--scope")
     f.add_argument("--observed-at")
+    f.add_argument("--markets", help="marchés couverts, clés source (ex. h2h,totals)")
     f.set_defaults(fn=cmd_ingest_file)
 
     sub.add_parser("bookmakers", help="bookmakers vus et leur rôle").set_defaults(fn=cmd_bookmakers)
@@ -272,10 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s : %(message)s",
-    )
+    configure_logging(verbose=args.verbose)
     return int(args.fn(Settings.from_env(), args))
 
 

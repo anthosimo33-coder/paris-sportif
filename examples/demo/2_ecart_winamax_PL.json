@@ -1,6 +1,11 @@
 {
  "scope": "soccer_epl",
  "observed_at": "2026-11-01T15:00:00Z",
+ "markets": [
+  "h2h",
+  "totals",
+  "spreads"
+ ],
  "response": [
   {
    "id": "demo-ars-che",

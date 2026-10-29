@@ -8,7 +8,7 @@
 --
 -- Trois familles de tables :
 --   référentiel      : competition, team, bookmaker, event (+ correspondances par source)
---   observations     : odds_quote, event_schedule, poll_event, raw_payload (ajout seul)
+--   observations     : odds_quote, event_schedule, poll_event (ajout seul), raw_payload (archive)
 --   projection       : odds_current (état courant, dérivé du journal, reconstructible)
 
 -- ---------------------------------------------------------------- référentiel
@@ -115,6 +115,9 @@ INSERT INTO market_selection (market, selection) VALUES
 
 -- ---------------------------------------------------------------- collecte
 
+-- Archive des réponses brutes, pour pouvoir tout rejouer. Contenu immuable (pas d'UPDATE)
+-- mais purgeable (DELETE autorisé pour la rétention) : rien n'y fait référence par clé
+-- étrangère, poll_run garde seulement l'empreinte.
 CREATE TABLE raw_payload (
     sha256      text PRIMARY KEY,
     body        jsonb NOT NULL,
@@ -136,7 +139,7 @@ CREATE TABLE poll_run (
                        CHECK (status IN ('running', 'ok', 'error')),
     http_status        int,
     error              text,
-    raw_sha256         text REFERENCES raw_payload (sha256),
+    raw_sha256         text,                     -- empreinte de la réponse (raw_payload)
     quota_remaining    int,
     quota_used         int,
     quota_last_cost    int,
@@ -158,14 +161,19 @@ CREATE TABLE poll_event (
 );
 CREATE INDEX poll_event_event_idx ON poll_event (event_id, observed_at DESC);
 
--- Horaire de coup d'envoi tel que connu à chaque instant. Une ligne par changement.
+-- Horaire de coup d'envoi tel que chaque source l'annonce, à chaque instant.
+-- Une ligne par changement ET par source : deux sources en désaccord ne s'écrasent pas.
+-- Le coup d'envoi retenu à T est le plus tôt des derniers horaires annoncés (prudent :
+-- on arrête de lire des cotes « d'avant-match » dès qu'une source dit que ça a commencé).
 CREATE TABLE event_schedule (
     event_id       bigint NOT NULL REFERENCES event (id),
+    provider       text NOT NULL REFERENCES provider (key),
     observed_at    timestamptz NOT NULL,
     commence_time  timestamptz NOT NULL,
     poll_id        bigint REFERENCES poll_run (id),
-    PRIMARY KEY (event_id, observed_at)
+    PRIMARY KEY (event_id, provider, observed_at)
 );
+CREATE INDEX event_schedule_asof_idx ON event_schedule (event_id, observed_at DESC);
 
 -- Journal des cotes : une ligne par CHANGEMENT d'état d'une cote.
 -- price NULL = la cote n'est plus proposée (retrait, suspension) à partir de observed_at.
@@ -183,8 +191,10 @@ CREATE TABLE odds_quote (
     FOREIGN KEY (market, selection) REFERENCES market_selection (market, selection),
     CHECK (price IS NULL OR price > 1)
 );
+-- INCLUDE : odds_as_of se lit en Index Only Scan (table en ajout seul, visibility map à jour).
 CREATE UNIQUE INDEX odds_quote_key_idx
-    ON odds_quote (event_id, bookmaker, market, line, selection, observed_at DESC);
+    ON odds_quote (event_id, bookmaker, market, line, selection, observed_at DESC)
+    INCLUDE (price, poll_id);
 
 -- Projection de l'état courant (dernière ligne de chaque cote). Dérivée du journal,
 -- maintenue dans la même transaction que lui : elle rend la détection de changements
@@ -223,47 +233,52 @@ CREATE TRIGGER poll_event_append_only BEFORE UPDATE OR DELETE ON poll_event
     FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
 CREATE TRIGGER poll_event_no_truncate BEFORE TRUNCATE ON poll_event
     FOR EACH STATEMENT EXECUTE FUNCTION forbid_mutation();
-CREATE TRIGGER raw_payload_append_only BEFORE UPDATE OR DELETE ON raw_payload
+CREATE TRIGGER raw_payload_immutable BEFORE UPDATE ON raw_payload
     FOR EACH ROW EXECUTE FUNCTION forbid_mutation();
-CREATE TRIGGER raw_payload_no_truncate BEFORE TRUNCATE ON raw_payload
-    FOR EACH STATEMENT EXECUTE FUNCTION forbid_mutation();
 
 -- ---------------------------------------------------------------- requêtes à l'instant T
 
--- Cotes proposées à l'instant T pour un événement (les retraits sont exclus).
+-- Cotes proposées à l'instant T pour un événement (les retraits sont exclus), avec la
+-- source qui les a livrées (pour contrôler leur fraîcheur source par source).
 CREATE FUNCTION odds_as_of(p_event_id bigint, p_at timestamptz)
 RETURNS TABLE (
     bookmaker text, market text, line numeric, selection text,
-    price numeric, observed_at timestamptz
+    price numeric, observed_at timestamptz, provider text
 )
 LANGUAGE sql STABLE AS $$
-    SELECT s.bookmaker, s.market, s.line, s.selection, s.price, s.observed_at
+    SELECT s.bookmaker, s.market, s.line, s.selection, s.price, s.observed_at, pr.provider
     FROM (
         SELECT DISTINCT ON (q.bookmaker, q.market, q.line, q.selection)
-               q.bookmaker, q.market, q.line, q.selection, q.price, q.observed_at
+               q.bookmaker, q.market, q.line, q.selection, q.price, q.observed_at, q.poll_id
         FROM odds_quote q
         WHERE q.event_id = p_event_id
           AND q.observed_at <= p_at
         ORDER BY q.bookmaker, q.market, q.line, q.selection, q.observed_at DESC
     ) s
+    JOIN poll_run pr ON pr.id = s.poll_id
     WHERE s.price IS NOT NULL
 $$;
 
--- Horaire de coup d'envoi connu à l'instant T.
+-- Coup d'envoi connu à l'instant T : le plus tôt des derniers horaires de chaque source.
 CREATE FUNCTION kickoff_as_of(p_event_id bigint, p_at timestamptz)
 RETURNS timestamptz
 LANGUAGE sql STABLE AS $$
-    SELECT s.commence_time
-    FROM event_schedule s
-    WHERE s.event_id = p_event_id
-      AND s.observed_at <= p_at
-    ORDER BY s.observed_at DESC
-    LIMIT 1
+    SELECT min(k.commence_time)
+    FROM (
+        SELECT DISTINCT ON (s.provider) s.commence_time
+        FROM event_schedule s
+        WHERE s.event_id = p_event_id
+          AND s.observed_at <= p_at
+        ORDER BY s.provider, s.observed_at DESC
+    ) k
 $$;
 
--- Dernier instant <= T où un passage réussi a vu l'événement ET couvrait ce marché.
--- Une cote n'est fiable à T que si cette confirmation est récente.
-CREATE FUNCTION last_confirmed(p_event_id bigint, p_market text, p_at timestamptz)
+-- Dernier instant <= T où un passage réussi DE CETTE SOURCE a vu l'événement et couvrait
+-- ce marché. Une cote n'est fiable à T que si la source qui l'a livrée l'a confirmée
+-- récemment : une autre source qui continue de voir le match ne confirme rien.
+CREATE FUNCTION last_confirmed(
+    p_event_id bigint, p_market text, p_provider text, p_at timestamptz
+)
 RETURNS timestamptz
 LANGUAGE sql STABLE AS $$
     SELECT max(pe.observed_at)
@@ -271,6 +286,7 @@ LANGUAGE sql STABLE AS $$
     JOIN poll_run pr ON pr.id = pe.poll_id
     WHERE pe.event_id = p_event_id
       AND pe.observed_at <= p_at
+      AND pr.provider = p_provider
       AND p_market = ANY (pr.markets)
 $$;
 
@@ -283,14 +299,7 @@ RETURNS TABLE (
 LANGUAGE sql STABLE AS $$
     SELECT e.id, e.competition_id, e.home_team_id, e.away_team_id, k.commence_time
     FROM event e
-    CROSS JOIN LATERAL (
-        SELECT s.commence_time
-        FROM event_schedule s
-        WHERE s.event_id = e.id
-          AND s.observed_at <= p_at
-        ORDER BY s.observed_at DESC
-        LIMIT 1
-    ) k
+    CROSS JOIN LATERAL (SELECT kickoff_as_of(e.id, p_at) AS commence_time) k
     WHERE k.commence_time > p_at
       AND k.commence_time <= p_at + p_horizon
 $$;

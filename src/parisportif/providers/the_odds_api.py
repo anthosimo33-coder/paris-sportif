@@ -37,6 +37,10 @@ MARKET_MAP: dict[str, str] = {
     "draw_no_bet": "draw_no_bet",
 }
 
+# Marchés servis par l'appel groupé /sports/{sport}/odds. Les autres (btts, draw_no_bet…)
+# exigent l'appel par match /events/{id}/odds, plus coûteux : pas encore implémenté.
+BULK_MARKETS = frozenset({"h2h", "totals", "spreads"})
+
 _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
@@ -120,7 +124,8 @@ def parse_odds_response(
         if not (commence and isinstance(home, str) and isinstance(away, str) and event_id):
             warnings.append(f"événement ignoré (champs manquants) : {event_id!r}")
             continue
-        if home.strip() == away.strip():
+        home, away = home.strip(), away.strip()
+        if home == away:
             warnings.append(f"événement ignoré (domicile = extérieur) : {event_id!r}")
             continue
         if commence <= observed_at:
@@ -164,8 +169,8 @@ def parse_odds_response(
                 competition_ref=str(raw.get("sport_key") or scope),
                 competition_name=str(raw.get("sport_title") or raw.get("sport_key") or scope),
                 commence_time=commence,
-                home_team=home.strip(),
-                away_team=away.strip(),
+                home_team=home,
+                away_team=away,
                 quotes=tuple(quotes.values()),
             )
         )
@@ -198,9 +203,12 @@ class TheOddsApi:
     ) -> None:
         if not api_key:
             raise ValueError("ODDS_API_KEY manquant")
-        unknown = [m for m in markets if m not in MARKET_MAP]
+        unknown = [m for m in markets if m not in BULK_MARKETS]
         if unknown:
-            raise ValueError(f"marchés non supportés : {unknown} (connus : {sorted(MARKET_MAP)})")
+            raise ValueError(
+                f"marchés non servis par /sports/{{sport}}/odds : {unknown} "
+                f"(possibles : {sorted(BULK_MARKETS)} ; les autres passent par l'appel par match)"
+            )
         self._api_key = api_key
         self._regions = tuple(regions)
         self._source_markets = tuple(markets)

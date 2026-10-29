@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
+import logging
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import httpx
 import pytest
 
 from parisportif import devig
-from parisportif.collector import next_interval
+from parisportif.cadence import next_interval
 from parisportif.normalize import normalize_team_name
 from parisportif.providers import the_odds_api
 from parisportif.providers.base import ProviderError
@@ -119,13 +122,54 @@ def test_fetch_error_does_not_leak_key() -> None:
 
 
 def test_normalize_team_name() -> None:
-    assert normalize_team_name("Paris Saint-Germain FC") == "paris saint germain"
-    assert normalize_team_name("AS Saint-Étienne") == "saint etienne"
+    assert normalize_team_name("Paris Saint-Germain") == "paris saint germain"
+    assert normalize_team_name("  AS Saint-Étienne ") == "as saint etienne"
     assert normalize_team_name("Brighton & Hove Albion") == "brighton and hove albion"
-    assert normalize_team_name("AS") == "as"
+    # Les sigles distinguent des clubs : jamais retirés.
+    assert normalize_team_name("Barcelona SC") != normalize_team_name("Barcelona")
     assert normalize_team_name(normalize_team_name("Olympique de Marseille")) == (
         "olympique de marseille"
     )
+
+
+def test_parse_tolerates_padded_team_names() -> None:
+    body = [
+        event("e1", KICKOFF, [book("bk", h2h=(1.5, 4.2, 6.0))], home="Arsenal ", away=" Chelsea")
+    ]
+    body[0]["bookmakers"][0]["markets"][0]["outcomes"][0]["name"] = "Arsenal"
+    body[0]["bookmakers"][0]["markets"][0]["outcomes"][2]["name"] = "Chelsea"
+    events, unmapped, _ = parse(body)
+    assert unmapped == 0 and len(events[0].quotes) == 3
+    assert (events[0].home_team, events[0].away_team) == ("Arsenal", "Chelsea")
+
+
+def test_only_bulk_markets_are_accepted() -> None:
+    with pytest.raises(ValueError, match="btts"):
+        the_odds_api.TheOddsApi("k", markets=("h2h", "btts"))
+
+
+def test_api_key_never_reaches_the_logs(caplog: pytest.LogCaptureFixture) -> None:
+    from parisportif.cli import configure_logging
+
+    configure_logging()
+    body = [event("e1", datetime.now(UTC) + timedelta(days=1), [book("bk", h2h=(1.5, 4.2, 6.0))])]
+    api = the_odds_api.TheOddsApi(
+        "SECRET-KEY",
+        client=httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, json=body))
+        ),
+    )
+    with caplog.at_level(logging.DEBUG):
+        api.fetch("soccer_epl", datetime.now(UTC))
+    assert all("SECRET-KEY" not in r.getMessage() for r in caplog.records)
+
+
+def test_ingest_file_refuses_missing_observation_time(tmp_path: Path) -> None:
+    from parisportif.cli import main
+
+    path = tmp_path / "rejeu.json"
+    path.write_text(json.dumps({"scope": "soccer_epl", "response": []}))
+    assert main(["ingest-file", str(path)]) == 2
 
 
 def test_devig_methods_sum_to_one_and_power_shrinks_longshot() -> None:

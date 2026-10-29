@@ -12,7 +12,7 @@ import pytest
 from psycopg.rows import TupleRow
 
 from parisportif import devig, pit
-from parisportif.collector import poll_once
+from parisportif.collector import close_abandoned_polls, poll_once, run_forever
 from parisportif.ingest import OutOfOrderError, ingest, start_poll
 from parisportif.models import ProviderResponse
 from parisportif.providers.base import ProviderError
@@ -149,8 +149,8 @@ def test_kickoff_change_is_versioned(timeline: Conn) -> None:
 
 
 def test_value_scan_finds_the_gap_only_once_it_exists(timeline: Conn) -> None:
-    assert pit.value_scan(timeline, T1 + timedelta(minutes=5)) == []
-    signals = pit.value_scan(timeline, T2 + timedelta(minutes=1))
+    assert pit.value_scan(timeline, T1 + timedelta(minutes=5)).signals == []
+    signals = pit.value_scan(timeline, T2 + timedelta(minutes=1)).signals
     assert len(signals) == 1
     s = signals[0]
     p_over = devig.fair_probabilities([1.85, 2.02])[0]
@@ -166,10 +166,16 @@ def test_value_scan_finds_the_gap_only_once_it_exists(timeline: Conn) -> None:
     assert not s.suspect
 
 
-def test_value_scan_refuses_stale_data(timeline: Conn) -> None:
-    late = T3 + timedelta(minutes=25)  # plus aucun passage depuis T3
-    assert pit.value_scan(timeline, late, max_staleness=timedelta(minutes=20)) == []
-    assert len(pit.value_scan(timeline, late, max_staleness=timedelta(minutes=30))) == 1
+def test_staleness_follows_the_collection_cadence(timeline: Conn) -> None:
+    # Coup d'envoi dans ~33 h : passage attendu toutes les heures, retard toléré 1 h 30.
+    assert len(pit.value_scan(timeline, T3 + timedelta(minutes=25)).signals) == 1
+    late = pit.value_scan(timeline, T3 + timedelta(minutes=100))
+    assert late.signals == [] and late.stale_skipped == 1
+    # À une heure du coup d'envoi (passage toutes les 2 min), 25 min sans nouvelles = périmé.
+    near = KICKOFF - timedelta(minutes=50)
+    poll(timeline, [PINNACLE, winamax(2.10), BETCLIC], near)
+    assert len(pit.value_scan(timeline, near + timedelta(minutes=5)).signals) == 1
+    assert pit.value_scan(timeline, near + timedelta(minutes=25)).signals == []
 
 
 def test_closing_line_is_last_state_before_kickoff(timeline: Conn) -> None:
@@ -191,35 +197,115 @@ def test_closing_line_is_last_state_before_kickoff(timeline: Conn) -> None:
     assert pit.clv(2.10, p_close) == pytest.approx(2.10 * p_close - 1)
 
 
-def _other_source(at: datetime, away: str) -> ProviderResponse:
-    body = [
-        event(
-            "ref-autre-source",
-            KICKOFF,
-            [book("zebet_fr", h2h=(1.48, 4.25, 6.10), home="Paris Saint-Germain FC", away=away)],
-            home="Paris Saint-Germain FC",
-            away=away,
-        )
-    ]
+def _other_source(
+    at: datetime,
+    books: list[dict[str, Any]] | None = None,
+    *,
+    kickoff: datetime = KICKOFF,
+) -> ProviderResponse:
+    home, away = "Paris Saint-Germain FC", "Lens"
+    if books is None:
+        books = [book("zebet_fr", h2h=(1.48, 4.25, 6.10), home=home, away=away)]
+    for b in books:  # mêmes noms d'équipes que l'événement de cette source
+        for m in b["markets"]:
+            for o in m["outcomes"]:
+                o["name"] = {"Paris Saint Germain": home, "RC Lens": away}.get(o["name"], o["name"])
+    body = [event("ref-autre-source", kickoff, books, home=home, away=away)]
     return replace(response(body, at), provider="autre_source")
 
 
-def test_unknown_team_name_creates_a_separate_event(timeline: Conn) -> None:
-    # « Lens » != « RC Lens » une fois normalisé : sans alias, c'est une autre équipe.
-    ingest_resp(timeline, _other_source(T4, "Lens"))
+def _alias_other_source(conn: Conn) -> None:
+    conn.execute(
+        "INSERT INTO team_alias (alias_norm, team_id, origin) VALUES "
+        "('paris saint germain fc', 1, 'manual'), ('lens', 2, 'manual')"
+    )
+    conn.commit()
+
+
+def test_unknown_team_name_creates_a_separate_event_flagged_for_review(timeline: Conn) -> None:
+    # « Lens » != « RC Lens » : sans alias, c'est une autre équipe (jamais de fusion devinée).
+    ingest_resp(timeline, _other_source(T4))
     assert count(timeline, "SELECT count(*) FROM event") == 2
+    assert count(timeline, "SELECT count(*) FROM team WHERE needs_review") == 2
+
+
+def test_similar_names_are_not_merged(conn: Conn) -> None:
+    body = [
+        event("a", KICKOFF, [], home="Barcelona", away="Sevilla"),
+        event("b", KICKOFF, [], home="Barcelona SC", away="Emelec"),
+    ]
+    ingest_resp(conn, response(body, T1))
+    assert count(conn, "SELECT count(*) FROM team") == 4
 
 
 def test_second_source_maps_to_same_event_and_does_not_remove_others(timeline: Conn) -> None:
-    timeline.execute(
-        "INSERT INTO team_alias (alias_norm, team_id, origin) VALUES ('lens', 2, 'manual')"
-    )
-    ingest_resp(timeline, _other_source(T4, "Lens"))
+    _alias_other_source(timeline)
+    ingest_resp(timeline, _other_source(T4))
     assert count(timeline, "SELECT count(*) FROM event") == 1
     assert count(timeline, "SELECT count(*) FROM event_source WHERE event_id = 1") == 2
     assert price_at(timeline, T4, "zebet_fr", "1x2", "home") == Decimal("1.48")
     # Cette source ne cote pas Pinnacle : les cotes Pinnacle (autre source) restent en place.
     assert price_at(timeline, T4, "pinnacle", "1x2", "home") == Decimal("1.50")
+
+
+def test_same_bookmaker_from_two_sources_never_overwrites(timeline: Conn) -> None:
+    _alias_other_source(timeline)
+    ingest_resp(timeline, _other_source(T4, [book("winamax_fr", h2h=(1.60, 4.0, 5.0))]))
+    assert price_at(timeline, T4, "autre_source:winamax_fr", "1x2", "home") == Decimal("1.60")
+    assert price_at(timeline, T4, "winamax_fr", "1x2", "home") == Decimal("1.45")
+    # La 2e source cesse de livrer Winamax : seul SON flux est retiré.
+    ingest_resp(timeline, _other_source(T4 + timedelta(minutes=1)))
+    assert (
+        price_at(timeline, T4 + timedelta(minutes=1), "autre_source:winamax_fr", "1x2", "home")
+        is None
+    )
+    assert price_at(timeline, T4 + timedelta(minutes=1), "winamax_fr", "1x2", "home") == Decimal(
+        "1.45"
+    )
+
+
+def test_a_stopped_source_is_not_confirmed_by_another(timeline: Conn) -> None:
+    _alias_other_source(timeline)
+    # La source principale (Pinnacle + Winamax) s'arrête après T3 ; l'autre continue.
+    for minutes in range(10, 240, 30):
+        ingest_resp(timeline, _other_source(T3 + timedelta(minutes=minutes)))
+    late = pit.value_scan(timeline, T3 + timedelta(minutes=235))
+    assert late.signals == [] and late.stale_skipped == 1
+
+
+def test_order_check_is_per_source(timeline: Conn) -> None:
+    _alias_other_source(timeline)
+    poll(timeline, [PINNACLE, winamax(2.20), BETCLIC], T4)  # change une cote : écrit à T4
+    # Plus tôt que le dernier passage de la source principale, mais nouveau pour celle-ci.
+    ingest_resp(timeline, _other_source(T4 - timedelta(minutes=1)))
+    assert price_at(timeline, T4, "zebet_fr", "1x2", "home") == Decimal("1.48")
+
+
+def test_sources_disagreeing_on_kickoff_use_the_earliest(timeline: Conn) -> None:
+    _alias_other_source(timeline)
+    earlier = KICKOFF - timedelta(hours=1)
+    ingest_resp(timeline, _other_source(T4, kickoff=earlier))
+    assert pit.kickoff_as_of(timeline, 1, T4) == earlier
+    poll(timeline, [PINNACLE, winamax(2.10), BETCLIC], T4 + timedelta(minutes=1))
+    # La source principale redit 20:00 : rien n'est réécrit, le plus tôt reste retenu.
+    assert pit.kickoff_as_of(timeline, 1, T4 + timedelta(minutes=1)) == earlier
+    assert count(timeline, "SELECT count(*) FROM event_schedule") == 2
+
+
+def test_role_added_to_file_after_discovery_is_applied(conn: Conn) -> None:
+    resp1 = response([event("e1", KICKOFF, [winamax(1.80), BETCLIC])], T1)
+    start = start_poll(
+        conn, provider=resp1.provider, scope=resp1.scope, markets=MARKETS, request_url=None
+    )
+    ingest(conn, start, resp1, roles={})
+    conn.execute("UPDATE bookmaker SET role = 'other' WHERE key = 'betclic_fr'")
+    resp2 = response([event("e1", KICKOFF, [winamax(1.80), BETCLIC])], T2)
+    start = start_poll(
+        conn, provider=resp2.provider, scope=resp2.scope, markets=MARKETS, request_url=None
+    )
+    ingest(conn, start, resp2, roles=ROLES)
+    roles = dict(conn.execute("SELECT key, role FROM bookmaker").fetchall())
+    assert roles == {"winamax_fr": "fr_licensed", "betclic_fr": "other"}  # set-role gagne
 
 
 class _FailingProvider:
@@ -233,8 +319,64 @@ class _FailingProvider:
         raise ProviderError("HTTP 429 : quota", http_status=429)
 
 
+class _CrashingProvider(_FailingProvider):
+    def fetch(self, scope: str, now: datetime) -> ProviderResponse:
+        raise RuntimeError("bug inattendu")
+
+
+def test_unexpected_provider_crash_is_traced_then_raised(conn: Conn) -> None:
+    with pytest.raises(RuntimeError):
+        poll_once(conn, _CrashingProvider(), "soccer_epl", ROLES, T1)
+    row = conn.execute("SELECT status, error FROM poll_run").fetchone()
+    assert row == ("error", "fournisseur : RuntimeError")
+
+
+class _ConnectionKiller(_FailingProvider):
+    """Coupe la base pendant l'appel réseau, comme un redémarrage de Postgres."""
+
+    def __init__(self, conn: Conn) -> None:
+        self.conn = conn
+
+    def fetch(self, scope: str, now: datetime) -> ProviderResponse:
+        self.conn.close()
+        raise ProviderError("HTTP 503", http_status=503)
+
+
+def test_collector_stops_when_the_database_is_lost(conn: Conn) -> None:
+    with pytest.raises(psycopg.OperationalError):
+        run_forever(
+            conn,
+            _ConnectionKiller(conn),
+            ("soccer_epl",),
+            ROLES,
+            quota_reserve=0,
+            clock=lambda: T1,
+            sleep=lambda _s: None,
+            max_polls=3,
+        )
+
+
+def test_abandoned_polls_are_closed_at_startup(conn: Conn) -> None:
+    conn.execute("INSERT INTO provider (key) VALUES ('the_odds_api')")
+    conn.execute(
+        "INSERT INTO poll_run (provider, scope, markets, started_at) VALUES "
+        "('the_odds_api', 's', '{1x2}', %s), ('the_odds_api', 's', '{1x2}', %s)",
+        (T1 - timedelta(hours=2), T1 - timedelta(minutes=5)),
+    )
+    assert close_abandoned_polls(conn, "the_odds_api", T1) == 1
+
+
 def test_failed_poll_is_traced(conn: Conn) -> None:
     out = poll_once(conn, _FailingProvider(), "soccer_epl", ROLES, T1)
     assert out.stats is None and out.error is not None
     row = conn.execute("SELECT status, http_status, error FROM poll_run").fetchone()
     assert row == ("error", 429, "HTTP 429 : quota")
+
+
+def test_ingest_works_inside_an_open_transaction(timeline: Conn) -> None:
+    timeline.execute("SELECT 1")  # transaction implicite laissée ouverte par l'appelant
+    poll(timeline, [PINNACLE, winamax(2.20), BETCLIC], T4)
+    poll(timeline, [PINNACLE, winamax(2.30), BETCLIC], T4 + timedelta(minutes=1))
+    assert price_at(
+        timeline, T4 + timedelta(minutes=1), "winamax_fr", "total_goals", "over", "2.5"
+    ) == Decimal("2.30")
